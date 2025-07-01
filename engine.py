@@ -52,17 +52,14 @@ class SimulationEngine:
             
     def _initialize_hodl_comparison(self):
         """Initialize HODL bot and comparison system."""
-        from hodl_bot import HODLBot, AdaptabilityMeasurer
-        
+        # Imports moved to top of file for clarity and to avoid circular import issues
+
         # Create HODL bot
         self.hodl_bot = HODLBot(self.ledger.cash)
-        
+
         # Create parallel HODL simulation
-        from ledger import Ledger
-        from router import AllocationManager
-        
         hodl_ledger = Ledger(self.ledger.cash, price_provider=self.ledger.price_provider)
-        if self.allocation_manager:
+        if self.allocation_manager is not None:
             hodl_allocation_manager = AllocationManager(
                 hodl_ledger,
                 self.allocation_manager.trade_backend,
@@ -72,7 +69,7 @@ class SimulationEngine:
         else:
             hodl_allocation_manager = None
         self.hodl_engine = SimulationEngine(hodl_ledger, hodl_allocation_manager, enable_hodl_comparison=False)
-        
+
         # Create adaptability measurer
         self.adaptability_measurer = AdaptabilityMeasurer()
 
@@ -105,9 +102,9 @@ class SimulationEngine:
             market_update = self.market_data_engine.get_market_update(current_date)
             
             if self.allocation_manager:
-                if hasattr(self.allocation_manager, 'trade_backend'):
+                if self.allocation_manager.trade_backend is not None:
                     self.allocation_manager.trade_backend.update_prices(market_update['prices'])
-                if hasattr(self.allocation_manager, 'debt_backend'):
+                if self.allocation_manager.debt_backend is not None:
                     self.allocation_manager.debt_backend.update_interest_rates(market_update['economic'])
 
             # Create news events from market data
@@ -115,7 +112,7 @@ class SimulationEngine:
                 news_events.append(NewsEvent(event_type="ECONOMIC_DATA", description=f"{key}: {value}", impact_data=market_update['economic']))
             
         # Process project lifecycle
-        if self.allocation_manager and hasattr(self.allocation_manager, 'project_backend') and self.allocation_manager.project_backend:
+        if self.allocation_manager and self.allocation_manager.project_backend is not None:
             project_news = self.allocation_manager.project_backend.tick(self.ledger)
             news_events.extend([NewsEvent(event_type="PROJECT_COMPLETION", description=news, impact_data={}) for news in project_news])
             
@@ -164,7 +161,7 @@ class SimulationEngine:
         
         # Get available projects
         projects_available = []
-        if self.allocation_manager and hasattr(self.allocation_manager, 'project_backend') and self.allocation_manager.project_backend:
+        if self.allocation_manager and self.allocation_manager.project_backend is not None:
             projects_available = self.allocation_manager.project_backend.get_available_projects()
         
         # Create observation

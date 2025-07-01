@@ -33,13 +33,13 @@ def test_full_reward_workflow():
     obs2, reward2, _, _, _ = engine.tick()
 
     # NAV should increase
-    # Initial investment was 10000 USD for 66.66 shares of AAPL at 150.
-    # Cash = 90000. Assets = 66.66 * 155 = 10333.33
-    # New NAV = 90000 + 10333.33 = 100333.33
-    # Previous NAV = 100000
-    # NAV Change = 333.33
-    # Expected Return = 100000 * 0.01 = 1000
-    # Adjusted NAV change = 333.33 - 1000 = -666.67
+    # Initial investment was $10,000 in AAPL at $150/share = 66.66 shares.
+    # After price rises to $155/share: 66.66 * 155 = 10,333.33
+    # New NAV = $90,000 (cash) + $10,333.33 (assets) = $100,333.33
+    # Previous NAV = $100,000
+    # NAV Change = $333.33
+    # Expected Return = $100,000 * 0.01 = $1,000
+    # Adjusted NAV change = $333.33 - $1,000 = -$666.67
     assert obs2.nav == pytest.approx(Decimal('100333.33'))
     assert reward2 == pytest.approx(Decimal('-666.67'))
 

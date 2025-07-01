@@ -5,19 +5,31 @@ from typing import Optional, Dict, Tuple, List, Union
 import os
 import warnings
 
+import os
+
+class StockDataFetchError(Exception):
+    pass
+
+class EconomicDataFetchError(Exception):
+    pass
+
 class DataFetcher:
     """
     Handles fetching data from external APIs like yfinance and FRED.
     Includes in-memory caching and methods to store data to CSV.
     """
-    def __init__(self, fred_api_key: Optional[str] = None):
-        self.fred = Fred(api_key=fred_api_key) if fred_api_key else None
+    def __init__(self):
+        fred_api_key = os.environ.get("FRED_API_KEY")
+        if not fred_api_key:
+            raise ValueError("FRED_API_KEY environment variable not set")
+        self.fred = Fred(api_key=fred_api_key)
         self.stock_cache: Dict[Tuple[str, str, str], pd.DataFrame] = {}
         self.econ_cache: Dict[Tuple[str, str, str], pd.Series] = {}
 
-    def get_stock_data(self, ticker: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    def get_stock_data(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
         Get historical stock data from yfinance, with in-memory caching.
+        Raises StockDataFetchError on failure.
         """
         cache_key = (ticker, start_date, end_date)
         if cache_key in self.stock_cache:
@@ -25,28 +37,31 @@ class DataFetcher:
         try:
             stock = yf.Ticker(ticker)
             data = stock.history(start=start_date, end=end_date)
+            if data is None or data.empty:
+                raise StockDataFetchError(f"No stock data found for {ticker} in given date range.")
             self.stock_cache[cache_key] = data
             return data
         except Exception as e:
-            print(f"Error fetching stock data for {ticker}: {e}")
-            return None
+            raise StockDataFetchError(f"Error fetching stock data for {ticker}: {e}")
 
-    def get_economic_data(self, series_id: str, start_date: str, end_date: str) -> Optional[pd.Series]:
+    def get_economic_data(self, series_id: str, start_date: str, end_date: str) -> pd.Series:
         """
         Get economic data from FRED, with in-memory caching.
+        Raises EconomicDataFetchError on failure.
         """
         if not self.fred:
-            warnings.warn("FRED API key not provided. Cannot fetch economic data.", UserWarning)
-            return None
+            raise EconomicDataFetchError("FRED API key not provided. Cannot fetch economic data.")
         cache_key = (series_id, start_date, end_date)
         if cache_key in self.econ_cache:
             return self.econ_cache[cache_key]
         try:
             data = self.fred.get_series(series_id, start_date, end_date)
+            if data is None or data.empty:
+                raise EconomicDataFetchError(f"No FRED data found for {series_id} in given date range.")
             self.econ_cache[cache_key] = data
             return data
         except Exception as e:
-            print(f"Error fetching FRED data for {series_id}: {e}")
+            raise EconomicDataFetchError(f"Error fetching FRED data for {series_id}: {e}")
             return None
 
     def save_stock_data_to_csv(self, data: pd.DataFrame, ticker: str, out_dir: str = "market_data/data"):
@@ -72,13 +87,12 @@ def fetch_and_store_all(
     fred_series: List[str],
     start_date: str,
     end_date: str,
-    fred_api_key: Optional[str] = None,
     out_dir: str = "market_data/data"
 ):
     """
     Fetch and store historical stock and economic data for given tickers and FRED series.
     """
-    fetcher = DataFetcher(fred_api_key=fred_api_key)
+    fetcher = DataFetcher()
     for ticker in tickers:
         stock_data = fetcher.get_stock_data(ticker, start_date, end_date)
         if stock_data is not None:
@@ -94,5 +108,5 @@ if __name__ == "__main__":
     fred_series = ["FEDFUNDS", "CPIAUCSL"]
     start_date = "2015-01-01"
     end_date = "2024-01-01"
-    fred_api_key = os.environ.get("FRED_API_KEY")  # Set your FRED API key as an environment variable
-    fetch_and_store_all(tickers, fred_series, start_date, end_date, fred_api_key=fred_api_key)
+    # Ensure FRED_API_KEY is set in your environment before running
+    fetch_and_store_all(tickers, fred_series, start_date, end_date)

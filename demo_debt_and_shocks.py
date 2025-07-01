@@ -103,19 +103,9 @@ def main():
     initial_bond_prices = {bond_id: bond.current_price for bond_id, bond in debt_backend.bonds.items()}
     initial_nav = ledger.get_nav()
 
-    # Simulate an interest rate shock by monkeypatching get_economic_data
-    def shock_get_economic_data(self, series_id, start_date, end_date):
-        # Return a Series with a sudden rate jump
-        idx = [pd.Timestamp("2024-05-31"), current_date]
-        return pd.Series([initial_rate, initial_rate + Decimal("1.5")], index=idx)
-    market_data_engine.fetcher.get_economic_data = types.MethodType(shock_get_economic_data, market_data_engine.fetcher)
-
-    # Get market update with shock
-    shock_update = market_data_engine.get_market_update(current_date)
-    if "economic" in shock_update:
-        debt_backend.update_interest_rates(shock_update["economic"])
-    if "prices" in shock_update:
-        trade_backend.update_prices(shock_update["prices"])
+    # Load and apply shocks from config
+    shocks = load_shocks()
+    apply_shocks(shocks, current_date, trade_backend, debt_backend)
 
     print(f"  📰 Interest rate shock applied: {initial_rate:.4f} → {debt_backend.base_interest_rate:.4f}")
     print(f"  💰 NAV: ${initial_nav:.2f} → ${ledger.get_nav():.2f}")
@@ -131,19 +121,7 @@ def main():
     initial_stock_prices = {ticker: stock.price for ticker, stock in trade_backend.stocks.items()}
     initial_nav = ledger.get_nav()
 
-    # Monkeypatch get_stock_data to simulate a price drop
-    def shock_get_stock_data(self, ticker, start_date, end_date):
-        idx = [pd.Timestamp("2024-05-31"), current_date]
-        # Drop price by 20% for demonstration
-        orig_price = initial_stock_prices[ticker]
-        return pd.DataFrame({"Close": [orig_price, orig_price * Decimal("0.8")]}, index=idx)
-    market_data_engine.fetcher.get_stock_data = types.MethodType(shock_get_stock_data, market_data_engine.fetcher)
-
-    # Get market update with price shock
-    shock_update = market_data_engine.get_market_update(current_date)
-    if "prices" in shock_update:
-        trade_backend.update_prices(shock_update["prices"])
-
+    # Apply market volatility shock from config (already handled in apply_shocks)
     print(f"  📰 Market volatility shock applied: -20% to all stocks")
     print(f"  💰 NAV: ${initial_nav:.2f} → ${ledger.get_nav():.2f}")
 

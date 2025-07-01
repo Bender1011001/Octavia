@@ -1,0 +1,14 @@
+{
+  "shocks": [
+    {
+      "type": "interest_rate",
+      "date": "2024-06-01",
+      "delta": 1.5
+    },
+    {
+      "type": "market_volatility",
+      "date": "2024-06-01",
+      "drop_pct": 0.2
+    }
+  ]
+}

@@ -40,7 +40,7 @@ class Ledger:
         # Check if we already own this asset
         existing_asset = self._find_asset(asset_type, identifier)
         if existing_asset:
-            # Update existing holding
+            # Update existing holding (consolidate investments in the same asset/project)
             total_quantity = existing_asset.quantity + quantity
             total_cost_basis = existing_asset.cost_basis + total_cost
             existing_asset.quantity = total_quantity
@@ -88,7 +88,8 @@ class Ledger:
         return True, proceeds
 
     def get_nav(self) -> Decimal:
-        """Calculate Net Asset Value (cash + market value of all assets)."""
+        """Calculate Net Asset Value (cash + market value of all assets). Skips assets with missing prices."""
+        import warnings
         asset_value = Decimal('0.00')
         for asset in self.assets:
             if self.price_provider and asset.asset_type == "EQUITY":
@@ -96,15 +97,15 @@ class Ledger:
                 if market_price is not None:
                     asset_value += asset.quantity * market_price
                 else:
-                    asset_value += asset.cost_basis # Fallback
+                    warnings.warn(f"Missing market price for equity {asset.identifier}; excluded from NAV.", UserWarning)
             elif self.price_provider and asset.asset_type == "BOND" and hasattr(self.price_provider, 'get_bond_price'):
                 bond_price = self.price_provider.get_bond_price(asset.identifier)
                 if bond_price is not None:
                     asset_value += asset.quantity * bond_price
                 else:
-                    asset_value += asset.cost_basis # Fallback
+                    warnings.warn(f"Missing market price for bond {asset.identifier}; excluded from NAV.", UserWarning)
             else:
-                asset_value += asset.cost_basis
+                warnings.warn(f"Unknown asset type or missing price provider for {asset.identifier}; excluded from NAV.", UserWarning)
         return (self.cash + asset_value).quantize(Decimal('0.01'))
 
     def get_portfolio_holdings(self) -> List[AssetHolding]:

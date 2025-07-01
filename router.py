@@ -94,6 +94,9 @@ class AllocationManager:
                         reason=f"Bond error: {str(e)}"
                     ))
 
-        # TODO: Process cash_allocs when needed
+        # Process cash_allocs (holding cash is a valid allocation, so just acknowledge)
+        for allocation in cash_allocs:
+            # No action needed; cash remains in ledger
+            pass
 
         return failed_allocations

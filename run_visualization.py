@@ -120,6 +120,35 @@ class VisualizationDemo:
         print(f"Final NAV: ${obs.nav:,.2f}")
         print(f"Total Return: {((obs.nav - Decimal('100000')) / Decimal('100000') * 100):.2f}%")
 
+    def run_rl_agent_simulation(self, agent_type="PPO", agent_path="ppo_agent_final.zip", num_ticks: int = 50):
+        """Run a simulation using a trained RL agent (PPO or SAC)."""
+        if agent_type == "PPO":
+            from stable_baselines3 import PPO
+            model = PPO.load(agent_path)
+        elif agent_type == "SAC":
+            from stable_baselines3 import SAC
+            model = SAC.load(agent_path)
+        else:
+            raise ValueError("Unsupported agent type: " + agent_type)
+
+        print(f"Starting RL agent simulation ({agent_type}) for {num_ticks} ticks...")
+
+        obs = self.engine.reset()
+        for tick in range(num_ticks):
+            # Convert simulation observation to gym-style dict if needed
+            obs_dict = obs.to_gym_dict() if hasattr(obs, "to_gym_dict") else obs
+            action, _ = model.predict(obs_dict, deterministic=True)
+            obs, reward, terminated, truncated, info = self.engine.tick(action)
+            if tick % 10 == 0:
+                print(f"Tick {tick}: NAV=${obs.nav:,.2f}, Cash=${obs.cash:,.2f}, Reward={reward:.2f}")
+            time.sleep(0.1)
+            if terminated or truncated:
+                break
+
+        print("RL Agent Simulation completed!")
+        print(f"Final NAV: ${obs.nav:,.2f}")
+        print(f"Total Return: {((obs.nav - Decimal('100000')) / Decimal('100000') * 100):.2f}%")
+
 
 def run_web_server():
     """Run the FastAPI web server."""
@@ -134,8 +163,17 @@ def run_web_server():
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
 
 
+import argparse
+
 def main():
     """Main function to start the visualization system."""
+    parser = argparse.ArgumentParser(description="Agent Tycoon Visualization System")
+    parser.add_argument("--headless", action="store_true", help="Run without interactive prompt (Ctrl+C to exit)")
+    parser.add_argument("--agent", type=str, default="random", choices=["random", "PPO", "SAC"], help="Agent type to use for simulation")
+    parser.add_argument("--agent-path", type=str, default="ppo_agent_final.zip", help="Path to trained RL agent model")
+    parser.add_argument("--num-ticks", type=int, default=100, help="Number of simulation ticks")
+    args = parser.parse_args()
+
     print("=== Agent Tycoon Visualization System ===")
     print("Starting web server on http://127.0.0.1:8000")
     print("Open your browser to view the dashboard")
@@ -156,19 +194,37 @@ def main():
     print()
     
     try:
-        # Run a demonstration simulation
-        demo.run_random_simulation(num_ticks=100)
+        # Run the selected simulation
+        if args.agent == "random":
+            demo.run_random_simulation(num_ticks=args.num_ticks)
+        else:
+            demo.run_rl_agent_simulation(agent_type=args.agent, agent_path=args.agent_path, num_ticks=args.num_ticks)
         
         print("\nSimulation completed! The web server is still running.")
         print("You can:")
         print("1. View the results at http://127.0.0.1:8000")
         print("2. Press Ctrl+C to exit")
-        print("3. Run another simulation by calling demo.run_random_simulation()")
+        print("3. Run another simulation by calling demo.run_random_simulation() or demo.run_rl_agent_simulation()")
         
-        # Keep the main thread alive
-        while True:
-            time.sleep(1)
-            
+        if args.headless:
+            # Headless mode: just wait for Ctrl+C
+            while True:
+                time.sleep(1)
+        else:
+            # Interactive mode: allow user to exit or run more simulations
+            while True:
+                user_input = input("Type 'run' to run another simulation, or 'exit' to quit: ").strip().lower()
+                if user_input == "run":
+                    if args.agent == "random":
+                        demo.run_random_simulation(num_ticks=args.num_ticks)
+                    else:
+                        demo.run_rl_agent_simulation(agent_type=args.agent, agent_path=args.agent_path, num_ticks=args.num_ticks)
+                    print("Simulation completed! View at http://127.0.0.1:8000")
+                elif user_input == "exit":
+                    print("Exiting visualization system.")
+                    break
+                else:
+                    print("Unknown command. Type 'run' or 'exit'.")
     except KeyboardInterrupt:
         print("\nShutting down...")
 

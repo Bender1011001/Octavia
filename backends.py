@@ -238,26 +238,27 @@ class ProjectBackend:
             
         return news_events
         
-    def _calculate_project_payout(self, investment: ProjectInvestment) -> Decimal:
-        """Calculate the payout for a completed project."""
+    def _calculate_project_payout(self, investment: ProjectInvestment, rng=None) -> Decimal:
+        """Calculate the payout for a completed project. Accepts optional rng for deterministic tests."""
         project = self.available_projects.get(investment.project_id)
         if not project:
             return Decimal('0.00')
-            
+        rng = rng or np.random
+
         # Determine if project succeeded
-        success_roll = np.random.random()
-        
+        success_roll = rng.random()
+
         if success_roll < float(project.success_probability):
             # Success - use lognormal distribution
             mean_return = float(project.expected_return_pct)
             # Use lognormal with mean and some variance
-            multiplier = np.random.lognormal(mean=np.log(1 + mean_return), sigma=0.2)
+            multiplier = rng.lognormal(mean=np.log(1 + mean_return), sigma=0.2)
             payout = investment.amount_invested * Decimal(str(multiplier))
         else:
             # Failure - use uniform distribution for salvage value (10-30% of investment)
-            salvage_pct = np.random.uniform(0.1, 0.3)
+            salvage_pct = rng.uniform(0.1, 0.3)
             payout = investment.amount_invested * Decimal(str(salvage_pct))
-            
+
         return payout.quantize(Decimal('0.01'))
         
     def get_agent_investments(self) -> List[ProjectInvestment]:
@@ -382,17 +383,25 @@ class DebtBackend:
 
         # Recalculate bond prices based on new interest rate environment
         for bond in self.bonds.values():
-            # Simplified bond pricing: inverse relationship with interest rates
-            # Price change = -duration * rate_change
-            # Using approximate duration = maturity_years
-            duration = Decimal(str(bond.maturity_years))
-            price_change_pct = -duration * rate_change
-            new_price = bond.current_price * (Decimal('1.0') + price_change_pct)
+            # Realistic bond pricing: present value of future cash flows
+            # P = sum(C/(1+r)^t) + F/(1+r)^N
+            # C = coupon payment, F = face value, r = new market rate, N = maturity
+            try:
+                r = Decimal(str(new_interest_rate))
+                C = bond.face_value * bond.coupon_rate
+                F = bond.face_value
+                N = bond.maturity_years
+                price = Decimal('0.0')
+                for t in range(1, N + 1):
+                    price += C / (Decimal('1.0') + r) ** t
+                price += F / (Decimal('1.0') + r) ** N
 
-            # Ensure price doesn't go below 10% of face value or above 200% of face value
-            min_price = bond.face_value * Decimal('0.1')
-            max_price = bond.face_value * Decimal('2.0')
-            bond.current_price = max(min_price, min(max_price, new_price)).quantize(Decimal('0.01'))
+                # Ensure price doesn't go below 10% of face value or above 200% of face value
+                min_price = bond.face_value * Decimal('0.1')
+                max_price = bond.face_value * Decimal('2.0')
+                bond.current_price = max(min_price, min(max_price, price)).quantize(Decimal('0.01'))
+            except Exception as e:
+                print(f"Error calculating bond price for {bond.bond_id}: {e}")
 
             # Recalculate yield to maturity
             bond.yield_to_maturity = bond._calculate_ytm()

@@ -10,6 +10,9 @@ from gymnasium import spaces
 import numpy as np
 from typing import Dict, Any, Tuple, Optional
 from decimal import Decimal
+import json
+import os
+from sklearn.preprocessing import StandardScaler
 
 from models import CapitalAllocationAction, Observation, EquityAlloc, ProjectAlloc, BondAlloc
 from engine import SimulationEngine
@@ -17,6 +20,20 @@ from ledger import Ledger
 from router import AllocationManager
 from backends import TradeBackend, ProjectBackend, DebtBackend
 
+# Load dynamic config for bonds and news events
+def load_bond_count():
+    with open(os.path.join("config", "bonds.json"), "r") as f:
+        data = json.load(f)
+    return len(data.get("bonds", []))
+
+def load_news_event_types():
+    with open(os.path.join("config", "news_events.json"), "r") as f:
+        data = json.load(f)
+    return data.get("news_events", [])
+
+NUM_BONDS = load_bond_count()
+NEWS_EVENT_TYPES = load_news_event_types()
+NUM_NEWS_EVENTS = len(NEWS_EVENT_TYPES)
 
 class AgentTycoonEnv(gym.Env):
     """
@@ -49,23 +66,22 @@ class AgentTycoonEnv(gym.Env):
         self.engine = SimulationEngine(self.ledger, self.allocation_manager)
         
         # Define action space
-        # Action space: [action_type, asset_type, asset_id, amount, cognition_cost]
-        # Simplified to discrete actions for easier RL training
+        # New: action_type, asset_type, asset_weights (continuous allocation), cognition_cost
+        num_assets = num_stocks + num_projects + num_bonds
         self.action_space = spaces.Dict({
             'action_type': spaces.Discrete(2),  # 0: no action, 1: allocate
             'asset_type': spaces.Discrete(3),   # 0: equity, 1: project, 2: bond
-            'asset_index': spaces.Discrete(10), # Index into available assets
-            'amount_pct': spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),  # Percentage of cash
+            'asset_weights': spaces.Box(low=0.0, high=1.0, shape=(num_assets,), dtype=np.float32),  # Allocation weights
             'cognition_cost': spaces.Box(low=0.0, high=100.0, shape=(1,), dtype=np.float32)
         })
         
         # Determine dynamic observation space sizes
         num_stocks = len(self.trade_backend.stocks)
         num_projects = len(self.project_backend.available_projects)
-        num_bonds = 5  # TODO: Make dynamic if bonds become configurable
+        num_bonds = NUM_BONDS
         num_project_features = 3  # required_investment, expected_return_pct, weeks_to_completion
-        max_portfolio_assets = num_stocks + num_projects + num_bonds  # or set to a reasonable upper bound
-        num_news_events = 10  # TODO: Make dynamic if news events become configurable
+        max_portfolio_assets = num_stocks + num_projects + num_bonds
+        num_news_events = NUM_NEWS_EVENTS
 
         # Define observation space
         self.observation_space = spaces.Dict({
@@ -78,6 +94,18 @@ class AgentTycoonEnv(gym.Env):
             'bond_prices': spaces.Box(low=0.0, high=np.inf, shape=(num_bonds,), dtype=np.float32),
             'news_events': spaces.Box(low=0.0, high=1.0, shape=(num_news_events,), dtype=np.float32)
         })
+
+        # StandardScaler for observation normalization
+        self.scaler = StandardScaler()
+        # Fit scaler on initial observation (could be extended to use historical data)
+        initial_obs = np.concatenate([
+            np.zeros(max_portfolio_assets),
+            np.zeros(num_stocks),
+            np.zeros(num_projects * num_project_features),
+            np.zeros(num_bonds),
+            np.zeros(num_news_events)
+        ]).reshape(1, -1)
+        self.scaler.fit(initial_obs)
         
         self.current_observation = None
         self.episode_length = 0
@@ -143,56 +171,47 @@ class AgentTycoonEnv(gym.Env):
         )
         
     def _convert_action(self, action: Dict[str, np.ndarray]) -> Optional[CapitalAllocationAction]:
-        """Convert gym action to CapitalAllocationAction."""
-        # Handle both scalar and array inputs
+        """Convert gym action to CapitalAllocationAction using continuous asset_weights."""
         action_type = int(action['action_type'].item() if hasattr(action['action_type'], 'item') else action['action_type'])
-        
-        if action_type == 0:  # No action
+        if action_type == 0:
             return None
-            
+
         asset_type = int(action['asset_type'].item() if hasattr(action['asset_type'], 'item') else action['asset_type'])
-        asset_index = int(action['asset_index'].item() if hasattr(action['asset_index'], 'item') else action['asset_index'])
-        amount_pct = float(action['amount_pct'][0] if hasattr(action['amount_pct'], '__getitem__') else action['amount_pct'])
+        asset_weights = action['asset_weights']
         cognition_cost = Decimal(str(float(action['cognition_cost'][0] if hasattr(action['cognition_cost'], '__getitem__') else action['cognition_cost']))).quantize(Decimal('0.01'))
-        
-        # Calculate USD amount based on percentage of cash and quantize to 2 decimal places
-        usd_amount = (self.ledger.cash * Decimal(str(amount_pct))).quantize(Decimal('0.01'))
-        
+
+        # Normalize weights to sum to 1
+        weights = np.clip(asset_weights, 0, 1)
+        if np.sum(weights) > 0:
+            weights = weights / np.sum(weights)
+        else:
+            return None
+
+        # Get asset lists
+        tickers = list(self.trade_backend.stocks.keys())
+        projects = self.project_backend.get_available_projects()
+        bonds = list(self.debt_backend.bonds.keys())
+        all_assets = (
+            [("EQUITY", t) for t in tickers] +
+            [("PROJECT", p.project_id) for p in projects] +
+            [("BOND", b) for b in bonds]
+        )
+
         allocations = []
-        
-        if asset_type == 0:  # Equity
-            tickers = list(self.trade_backend.stocks.keys())
-            if asset_index < len(tickers):
-                ticker = tickers[asset_index]
-                allocations.append(EquityAlloc(
-                    asset_type="EQUITY",
-                    ticker=ticker,
-                    usd=usd_amount
-                ))
-                
-        elif asset_type == 1:  # Project
-            projects = self.project_backend.get_available_projects()
-            if asset_index < len(projects):
-                project = projects[asset_index]
-                allocations.append(ProjectAlloc(
-                    asset_type="PROJECT",
-                    project_id=project.project_id,
-                    usd=usd_amount
-                ))
-                
-        elif asset_type == 2:  # Bond
-            bonds = list(self.debt_backend.bonds.keys())
-            if asset_index < len(bonds):
-                bond_id = bonds[asset_index]
-                allocations.append(BondAlloc(
-                    asset_type="BOND",
-                    bond_id=bond_id,
-                    usd=usd_amount
-                ))
-        
+        cash = self.ledger.cash
+        for i, (atype, aid) in enumerate(all_assets):
+            usd_amount = (cash * Decimal(str(weights[i]))).quantize(Decimal('0.01'))
+            if usd_amount > 0:
+                if atype == "EQUITY":
+                    allocations.append(EquityAlloc(asset_type="EQUITY", ticker=aid, usd=usd_amount))
+                elif atype == "PROJECT":
+                    allocations.append(ProjectAlloc(asset_type="PROJECT", project_id=aid, usd=usd_amount))
+                elif atype == "BOND":
+                    allocations.append(BondAlloc(asset_type="BOND", bond_id=aid, usd=usd_amount))
+
         if not allocations:
             return None
-            
+
         return CapitalAllocationAction(
             action_type="ALLOCATE_CAPITAL",
             comment="Gym environment action",
@@ -201,51 +220,58 @@ class AgentTycoonEnv(gym.Env):
         )
         
     def _convert_observation(self, obs: Observation) -> Dict[str, np.ndarray]:
-        """Convert Observation to gym observation format."""
-        # Portfolio values (pad to 20)
-        portfolio_values = np.zeros(20, dtype=np.float32)
-        for i, holding in enumerate(obs.portfolio[:20]):
+        """Convert Observation to gym observation format, with normalization."""
+        num_stocks = len(self.trade_backend.stocks)
+        num_projects = len(self.project_backend.available_projects)
+        num_bonds = NUM_BONDS
+        max_portfolio_assets = num_stocks + num_projects + num_bonds
+        portfolio_values = np.zeros(max_portfolio_assets, dtype=np.float32)
+        for i, holding in enumerate(obs.portfolio[:max_portfolio_assets]):
             portfolio_values[i] = float(holding.current_value)
-            
-        # Stock prices
-        stock_prices = np.zeros(5, dtype=np.float32)
-        for i, ticker in enumerate(list(self.trade_backend.stocks.keys())[:5]):
+
+        stock_prices = np.zeros(num_stocks, dtype=np.float32)
+        for i, ticker in enumerate(list(self.trade_backend.stocks.keys())[:num_stocks]):
             price = self.trade_backend.get_price(ticker)
             stock_prices[i] = float(price) if price else 0.0
-            
-        # Project info (5 projects * 3 features: investment, return, weeks)
-        project_info = np.zeros(15, dtype=np.float32)
-        for i, project in enumerate(obs.projects_available[:5]):
+
+        num_project_features = 3
+        project_info = np.zeros(num_projects * num_project_features, dtype=np.float32)
+        for i, project in enumerate(obs.projects_available[:num_projects]):
             base_idx = i * 3
-            project_info[base_idx] = float(project.required_investment) / 100000.0  # Normalize
+            project_info[base_idx] = float(project.required_investment)
             project_info[base_idx + 1] = float(project.expected_return_pct)
-            project_info[base_idx + 2] = float(project.weeks_to_completion) / 20.0  # Normalize
-            
-        # Bond prices
-        bond_prices = np.zeros(5, dtype=np.float32)
-        for i, bond_id in enumerate(list(self.debt_backend.bonds.keys())[:5]):
+            project_info[base_idx + 2] = float(project.weeks_to_completion)
+
+        bond_prices = np.zeros(num_bonds, dtype=np.float32)
+        for i, bond_id in enumerate(list(self.debt_backend.bonds.keys())[:num_bonds]):
             price = self.debt_backend.get_bond_price(bond_id)
             bond_prices[i] = float(price) if price else 0.0
-            
-        # News events (one-hot encoding for common event types)
-        news_events = np.zeros(10, dtype=np.float32)
+
+        news_events = np.zeros(NUM_NEWS_EVENTS, dtype=np.float32)
         for event in obs.news:
-            if event.event_type == "RATE_SHOCK":
-                news_events[0] = 1.0
-            elif event.event_type == "MARKET_VOLATILITY":
-                news_events[1] = 1.0
-            elif event.event_type == "PROJECT_COMPLETION":
-                news_events[2] = 1.0
-                
+            if event.event_type in NEWS_EVENT_TYPES:
+                idx = NEWS_EVENT_TYPES.index(event.event_type)
+                news_events[idx] = 1.0
+
+        # Concatenate for normalization
+        obs_vector = np.concatenate([
+            portfolio_values,
+            stock_prices,
+            project_info,
+            bond_prices,
+            news_events
+        ]).reshape(1, -1)
+        norm_obs_vector = self.scaler.transform(obs_vector).flatten()
+
         return {
             'tick': np.array([obs.tick], dtype=np.int32),
             'cash': np.array([float(obs.cash)], dtype=np.float32),
             'nav': np.array([float(obs.nav)], dtype=np.float32),
-            'portfolio_values': portfolio_values,
-            'stock_prices': stock_prices,
-            'project_info': project_info,
-            'bond_prices': bond_prices,
-            'news_events': news_events
+            'portfolio_values': norm_obs_vector[:max_portfolio_assets],
+            'stock_prices': norm_obs_vector[max_portfolio_assets:max_portfolio_assets+num_stocks],
+            'project_info': norm_obs_vector[max_portfolio_assets+num_stocks:max_portfolio_assets+num_stocks+num_projects*num_project_features],
+            'bond_prices': norm_obs_vector[-(num_bonds+NUM_NEWS_EVENTS):-NUM_NEWS_EVENTS] if NUM_NEWS_EVENTS > 0 else norm_obs_vector[-num_bonds:],
+            'news_events': norm_obs_vector[-NUM_NEWS_EVENTS:]
         }
         
     def _convert_info(self, info) -> Dict[str, Any]:

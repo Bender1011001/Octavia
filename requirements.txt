@@ -12,3 +12,6 @@ pandas
 statsmodels
 fredapi
 arch
+stable-baselines3>=2.2.1
+torch>=2.0.0
+optuna>=3.0.0
