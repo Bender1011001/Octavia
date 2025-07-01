@@ -1,0 +1,49 @@
+{
+  "projects": [
+    {
+      "project_id": "P-001",
+      "name": "Tech Startup Alpha",
+      "required_investment": "50000.00",
+      "expected_return_pct": "0.25",
+      "risk_level": "HIGH",
+      "weeks_to_completion": 8,
+      "success_probability": "0.6"
+    },
+    {
+      "project_id": "P-002",
+      "name": "Green Energy Initiative",
+      "required_investment": "75000.00",
+      "expected_return_pct": "0.18",
+      "risk_level": "MEDIUM",
+      "weeks_to_completion": 12,
+      "success_probability": "0.75"
+    },
+    {
+      "project_id": "P-003",
+      "name": "Real Estate Development",
+      "required_investment": "100000.00",
+      "expected_return_pct": "0.15",
+      "risk_level": "LOW",
+      "weeks_to_completion": 16,
+      "success_probability": "0.85"
+    },
+    {
+      "project_id": "P-004",
+      "name": "Biotech Research",
+      "required_investment": "30000.00",
+      "expected_return_pct": "0.35",
+      "risk_level": "HIGH",
+      "weeks_to_completion": 6,
+      "success_probability": "0.5"
+    },
+    {
+      "project_id": "P-005",
+      "name": "Infrastructure Bond",
+      "required_investment": "25000.00",
+      "expected_return_pct": "0.08",
+      "risk_level": "LOW",
+      "weeks_to_completion": 4,
+      "success_probability": "0.95"
+    }
+  ]
+}

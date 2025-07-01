@@ -1,0 +1,44 @@
+{
+  "bonds": [
+    {
+      "bond_id": "BOND-001",
+      "name": "US Treasury 10Y",
+      "face_value": "1000.00",
+      "coupon_rate": "0.025",
+      "maturity_years": 10,
+      "current_price": "980.00"
+    },
+    {
+      "bond_id": "BOND-002",
+      "name": "Corporate AAA 5Y",
+      "face_value": "1000.00",
+      "coupon_rate": "0.035",
+      "maturity_years": 5,
+      "current_price": "1020.00"
+    },
+    {
+      "bond_id": "BOND-003",
+      "name": "Municipal 7Y",
+      "face_value": "1000.00",
+      "coupon_rate": "0.028",
+      "maturity_years": 7,
+      "current_price": "995.00"
+    },
+    {
+      "bond_id": "BOND-004",
+      "name": "High Yield 3Y",
+      "face_value": "1000.00",
+      "coupon_rate": "0.065",
+      "maturity_years": 3,
+      "current_price": "950.00"
+    },
+    {
+      "bond_id": "BOND-005",
+      "name": "Treasury TIPS 15Y",
+      "face_value": "1000.00",
+      "coupon_rate": "0.015",
+      "maturity_years": 15,
+      "current_price": "1050.00"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "stocks": {
+    "AAPL": {
+      "ticker": "AAPL",
+      "price": "150.00"
+    },
+    "GOOGL": {
+      "ticker": "GOOGL", 
+      "price": "2500.00"
+    },
+    "MSFT": {
+      "ticker": "MSFT",
+      "price": "300.00"
+    },
+    "TSLA": {
+      "ticker": "TSLA",
+      "price": "800.00"
+    },
+    "AMZN": {
+      "ticker": "AMZN",
+      "price": "3200.00"
+    }
+  }
+}
