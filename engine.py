@@ -4,20 +4,16 @@ from collections import deque
 from decimal import Decimal
 from typing import Deque, Optional, Tuple, Dict
 from enum import Enum
+import pandas as pd
 
 from ledger import Ledger
 from models import CapitalAllocationAction, InfoDict, Observation, NewsEvent
 from visualization import event_collector, EventType
-
-
-class ShockType(Enum):
-    RATE_HIKE = "RATE_HIKE"
-    RATE_CUT = "RATE_CUT"
-    MARKET_VOLATILITY = "MARKET_VOLATILITY"
+from market_data.engine import MarketDataEngine
 
 
 class SimulationEngine:
-    def __init__(self, ledger: Ledger, allocation_manager=None, enable_hodl_comparison: bool = False):
+    def __init__(self, ledger: Ledger, allocation_manager=None, enable_hodl_comparison: bool = False, market_data_engine: Optional[MarketDataEngine] = None):
         """Initialize the simulation with starting conditions."""
         self.current_tick = 0
         self.ledger = ledger
@@ -25,17 +21,14 @@ class SimulationEngine:
         self.risk_free_rate = Decimal('0.01')  # 1% per period
         self.target_volatility = Decimal('0.02')  # 2% target volatility
         self.previous_nav = ledger.cash
+        self.market_data_engine = market_data_engine
+        self.start_date = pd.to_datetime("2023-01-01")
 
         # Reward calculation attributes
         self.nav_history: Deque[Decimal] = deque(maxlen=10)
         self.lambda_vol = Decimal('1.0')  # Volatility penalty coefficient
         self.kappa_cost = Decimal('0.01')  # Cognition cost coefficient
         self.kappa_mem = Decimal('0.001')  # Memory cost coefficient
-        
-        # Shock mechanism attributes
-        self.shock_probability = Decimal('0.05')  # 5% chance per tick
-        self.last_shock_tick = 0
-        self.min_ticks_between_shocks = 5
         
         # HODL bot comparison
         self.enable_hodl_comparison = enable_hodl_comparison
@@ -105,21 +98,21 @@ class SimulationEngine:
             data={'tick_start': True}
         )
         
-        # Process shocks first (before agent action)
+        # Process market data update
         news_events = []
-        shock_event = self.trigger_shock()
-        if shock_event:
-            news_events.append(shock_event)
-            # Emit market shock event
-            event_collector.emit(
-                EventType.MARKET_SHOCK,
-                tick=self.current_tick,
-                data={
-                    'shock_type': shock_event.event_type,
-                    'description': shock_event.description,
-                    'impact_data': shock_event.impact_data
-                }
-            )
+        if self.market_data_engine:
+            current_date = self.start_date + pd.to_timedelta(self.current_tick, unit='D')
+            market_update = self.market_data_engine.get_market_update(current_date)
+            
+            if self.allocation_manager:
+                if hasattr(self.allocation_manager, 'trade_backend'):
+                    self.allocation_manager.trade_backend.update_prices(market_update['prices'])
+                if hasattr(self.allocation_manager, 'debt_backend'):
+                    self.allocation_manager.debt_backend.update_interest_rates(market_update['economic'])
+
+            # Create news events from market data
+            for key, value in market_update['economic'].items():
+                news_events.append(NewsEvent(event_type="ECONOMIC_DATA", description=f"{key}: {value}", impact_data=market_update['economic']))
             
         # Process project lifecycle
         if self.allocation_manager and hasattr(self.allocation_manager, 'project_backend') and self.allocation_manager.project_backend:
@@ -208,11 +201,14 @@ class SimulationEngine:
         )
         
         # Record shock for adaptability measurement
-        if self.enable_hodl_comparison and shock_event and self.adaptability_measurer:
-            hodl_nav = self.hodl_engine.ledger.get_nav() if self.hodl_engine else obs.nav
-            self.adaptability_measurer.record_shock(
-                self.current_tick, shock_event.event_type, obs.nav, hodl_nav
-            )
+        if self.enable_hodl_comparison and self.adaptability_measurer:
+            # Find if a shock-like event happened to record for adaptability
+            shock_event = next((event for event in news_events if event.event_type == "ECONOMIC_DATA"), None)
+            if shock_event:
+                hodl_nav = self.hodl_engine.ledger.get_nav() if self.hodl_engine else obs.nav
+                self.adaptability_measurer.record_shock(
+                    self.current_tick, shock_event.event_type, obs.nav, hodl_nav
+                )
         
         # Update adaptability measurement
         if self.enable_hodl_comparison and self.adaptability_measurer:
@@ -328,75 +324,6 @@ class SimulationEngine:
             news=[]
         )
 
-    def trigger_shock(self) -> Optional[NewsEvent]:
-        """Randomly trigger a shock event."""
-        # Check if enough time has passed since last shock
-        if self.current_tick - self.last_shock_tick < self.min_ticks_between_shocks:
-            return None
-            
-        # Check if shock should occur
-        if random.random() > float(self.shock_probability):
-            return None
-            
-        # Select shock type
-        shock_types = list(ShockType)
-        shock_type = random.choice(shock_types)
-        
-        self.last_shock_tick = self.current_tick
-        
-        if shock_type == ShockType.RATE_HIKE:
-            return self._apply_rate_shock(25, 75)  # 25-75 basis points hike
-        elif shock_type == ShockType.RATE_CUT:
-            return self._apply_rate_shock(-75, -25)  # 25-75 basis points cut
-        elif shock_type == ShockType.MARKET_VOLATILITY:
-            return self._apply_market_volatility()
-            
-        return None
-        
-    def _apply_rate_shock(self, min_bps: int, max_bps: int) -> NewsEvent:
-        """Apply interest rate shock."""
-        rate_change_bps = random.randint(min_bps, max_bps)
-        
-        # Apply to debt backend if available
-        if (self.allocation_manager and
-            hasattr(self.allocation_manager, 'debt_backend') and
-            self.allocation_manager.debt_backend):
-            self.allocation_manager.debt_backend.apply_interest_rate_shock(rate_change_bps)
-        
-        shock_direction = "hike" if rate_change_bps > 0 else "cut"
-        description = f"Interest rate {shock_direction} of {abs(rate_change_bps)} basis points"
-        
-        return NewsEvent(
-            event_type="RATE_SHOCK",
-            description=description,
-            impact_data={"rate_change_bps": rate_change_bps}
-        )
-        
-    def _apply_market_volatility(self) -> NewsEvent:
-        """Apply market volatility shock to stock prices."""
-        if (self.allocation_manager and
-            hasattr(self.allocation_manager, 'trade_backend') and
-            self.allocation_manager.trade_backend):
-            
-            # Apply random price changes to all stocks
-            price_changes = {}
-            for ticker in self.allocation_manager.trade_backend.stocks.keys():
-                # Random change between -15% and +15%
-                change_pct = random.uniform(-0.15, 0.15)
-                current_price = self.allocation_manager.trade_backend.get_price(ticker)
-                if current_price:
-                    new_price = current_price * (Decimal('1.0') + Decimal(str(change_pct)))
-                    # Ensure price doesn't go below $1
-                    new_price = max(Decimal('1.00'), new_price)
-                    price_changes[ticker] = new_price
-            
-            self.allocation_manager.trade_backend.update_prices(price_changes)
-        
-        return NewsEvent(
-            event_type="MARKET_VOLATILITY",
-            description="Market volatility event: significant price movements across equities",
-            impact_data={"volatility_level": "HIGH"}
-        )
         
     def _tick_hodl_bot(self, main_obs: Observation):
         """Run HODL bot simulation tick."""

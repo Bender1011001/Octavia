@@ -112,10 +112,10 @@ class TradeBackend:
         return success
 
     def update_prices(self, price_changes: Dict[str, Decimal]):
-        """Update stock prices (for future market simulation)."""
+        """Update stock prices from market data engine."""
         for ticker, new_price in price_changes.items():
-            if ticker in self.stocks:
-                self.stocks[ticker].price = new_price
+            if ticker in self.stocks and new_price is not None:
+                self.stocks[ticker].price = Decimal(str(new_price))
 
 
 class ProjectBackend:
@@ -371,25 +371,29 @@ class DebtBackend:
         success, proceeds = ledger.remove_asset("BOND", bond_id, bond_units_to_sell)
         return success
         
-    def apply_interest_rate_shock(self, rate_change_bps: int):
-        """Apply interest rate shock to all bonds."""
-        rate_change = Decimal(str(rate_change_bps)) / Decimal('10000')  # Convert basis points to decimal
-        self.base_interest_rate += rate_change
-        
+    def update_interest_rates(self, economic_data: Dict[str, float]):
+        """Update bond prices based on new interest rate data."""
+        if 'interest_rate' not in economic_data or economic_data['interest_rate'] is None:
+            return
+
+        new_base_rate = Decimal(str(economic_data['interest_rate'])) / Decimal('100') # Assuming rate is in percent
+        rate_change = new_base_rate - self.base_interest_rate
+        self.base_interest_rate = new_base_rate
+
         # Recalculate bond prices based on new interest rate environment
         for bond in self.bonds.values():
             # Simplified bond pricing: inverse relationship with interest rates
-            # Price change = -duration * rate_change * current_price
-            # Using approximate duration = maturity_years * 0.8
-            duration = Decimal(str(bond.maturity_years)) * Decimal('0.8')
+            # Price change = -duration * rate_change
+            # Using approximate duration = maturity_years
+            duration = Decimal(str(bond.maturity_years))
             price_change_pct = -duration * rate_change
             new_price = bond.current_price * (Decimal('1.0') + price_change_pct)
-            
+
             # Ensure price doesn't go below 10% of face value or above 200% of face value
             min_price = bond.face_value * Decimal('0.1')
             max_price = bond.face_value * Decimal('2.0')
             bond.current_price = max(min_price, min(max_price, new_price)).quantize(Decimal('0.01'))
-            
+
             # Recalculate yield to maturity
             bond.yield_to_maturity = bond._calculate_ytm()
             
