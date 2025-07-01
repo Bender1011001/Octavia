@@ -14,7 +14,9 @@ from router import AllocationManager
 from engine import SimulationEngine
 from ledger import Ledger
 from models import BondAlloc, EquityAlloc, CapitalAllocationAction
-
+from market_data.engine import MarketDataEngine
+import pandas as pd
+import types
 
 def main():
     print("=" * 60)
@@ -79,34 +81,72 @@ def main():
     print(f"Cash: ${ledger.cash:,.2f}")
     print(f"NAV: ${ledger.get_nav():,.2f}")
     
-    # Demonstrate interest rate shock
-    print(f"\n⚡ APPLYING INTEREST RATE SHOCK...")
+    # --- MarketDataEngine-driven interest rate shock demonstration ---
+    print(f"\n⚡ APPLYING INTEREST RATE SHOCK (via MarketDataEngine)...")
+    # Setup MarketDataEngine with a fake FRED series for demonstration
+    tickers = list(trade_backend.stocks.keys())
+    fred_series = {"FEDFUNDS": "FEDFUNDS"}
+    market_data_engine = MarketDataEngine(tickers, fred_series, fred_api_key=None)
+    engine.market_data_engine = market_data_engine
+
+    # Simulate a normal tick (no shock)
+    current_date = pd.Timestamp("2024-06-01")
+    market_update = market_data_engine.get_market_update(current_date)
+    # Apply normal market update
+    if "economic" in market_update:
+        debt_backend.update_interest_rates(market_update["economic"])
+    if "prices" in market_update:
+        trade_backend.update_prices(market_update["prices"])
+
+    # Show state before shock
     initial_rate = debt_backend.base_interest_rate
     initial_bond_prices = {bond_id: bond.current_price for bond_id, bond in debt_backend.bonds.items()}
     initial_nav = ledger.get_nav()
-    
-    shock_event = engine._apply_rate_shock(150, 150)  # 1.5% rate hike
-    
-    print(f"  📰 {shock_event.description}")
-    print(f"  📈 Base rate: {initial_rate:.4f} → {debt_backend.base_interest_rate:.4f}")
+
+    # Simulate an interest rate shock by monkeypatching get_economic_data
+    def shock_get_economic_data(self, series_id, start_date, end_date):
+        # Return a Series with a sudden rate jump
+        idx = [pd.Timestamp("2024-05-31"), current_date]
+        return pd.Series([initial_rate, initial_rate + Decimal("1.5")], index=idx)
+    market_data_engine.fetcher.get_economic_data = types.MethodType(shock_get_economic_data, market_data_engine.fetcher)
+
+    # Get market update with shock
+    shock_update = market_data_engine.get_market_update(current_date)
+    if "economic" in shock_update:
+        debt_backend.update_interest_rates(shock_update["economic"])
+    if "prices" in shock_update:
+        trade_backend.update_prices(shock_update["prices"])
+
+    print(f"  📰 Interest rate shock applied: {initial_rate:.4f} → {debt_backend.base_interest_rate:.4f}")
     print(f"  💰 NAV: ${initial_nav:.2f} → ${ledger.get_nav():.2f}")
-    
+
     print(f"\n💎 BOND PRICE CHANGES:")
     for bond_id, bond in debt_backend.bonds.items():
         old_price = initial_bond_prices[bond_id]
         change_pct = ((bond.current_price - old_price) / old_price) * 100
         print(f"  {bond.name}: ${old_price:.2f} → ${bond.current_price:.2f} ({change_pct:+.2f}%)")
-    
-    # Demonstrate market volatility shock
-    print(f"\n🌪️  APPLYING MARKET VOLATILITY SHOCK...")
+
+    # --- MarketDataEngine-driven market volatility shock demonstration ---
+    print(f"\n🌪️  APPLYING MARKET VOLATILITY SHOCK (via MarketDataEngine)...")
     initial_stock_prices = {ticker: stock.price for ticker, stock in trade_backend.stocks.items()}
     initial_nav = ledger.get_nav()
-    
-    shock_event = engine._apply_market_volatility()
-    
-    print(f"  📰 {shock_event.description}")
+
+    # Monkeypatch get_stock_data to simulate a price drop
+    def shock_get_stock_data(self, ticker, start_date, end_date):
+        idx = [pd.Timestamp("2024-05-31"), current_date]
+        # Drop price by 20% for demonstration
+        orig_price = initial_stock_prices[ticker]
+        return pd.DataFrame({"Close": [orig_price, orig_price * Decimal("0.8")]}, index=idx)
+    market_data_engine.fetcher.get_stock_data = types.MethodType(shock_get_stock_data, market_data_engine.fetcher)
+
+    # Get market update with price shock
+    shock_update = market_data_engine.get_market_update(current_date)
+    if "prices" in shock_update:
+        trade_backend.update_prices(shock_update["prices"])
+
+    print(f"  📰 Market volatility shock applied: -20% to all stocks")
     print(f"  💰 NAV: ${initial_nav:.2f} → ${ledger.get_nav():.2f}")
-    
+
     print(f"\n📈 STOCK PRICE CHANGES:")
     for ticker, stock in trade_backend.stocks.items():
         old_price = initial_stock_prices[ticker]
@@ -129,13 +169,13 @@ def main():
     for holding in portfolio_holdings:
         print(f"  {holding.asset_type} {holding.identifier}: {holding.quantity:.6f} units, ${holding.current_value:.2f}")
     
-    # Demonstrate simulation tick with shock
-    print(f"\n🔄 SIMULATION TICK WITH SHOCK SYSTEM...")
-    engine.shock_probability = Decimal('1.0')  # Force shock for demo
-    engine.min_ticks_between_shocks = 0
-    
+    # Demonstrate simulation tick with market data engine
+    print(f"\n🔄 SIMULATION TICK WITH MARKET DATA ENGINE...")
+    # Reset monkeypatches to normal fetcher methods if needed for further ticks
+    # (In a real system, you would restore the original methods here.)
+
     obs, reward, terminated, truncated, info = engine.tick()
-    
+
     print(f"  Tick: {obs.tick}")
     print(f"  News events: {len(obs.news)}")
     for news in obs.news:

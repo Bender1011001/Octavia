@@ -1,6 +1,5 @@
 """Unit tests for the DebtBackend and Bond classes."""
 
-import pytest
 from decimal import Decimal
 from backends import DebtBackend, Bond
 from models import BondAlloc
@@ -196,48 +195,39 @@ class TestDebtBackend:
         
         assert success is True  # Zero allocation should succeed
         
-    def test_interest_rate_shock(self):
-        """Test interest rate shock application."""
+    def test_update_interest_rates(self):
+        """Test update_interest_rates updates base rate and bond prices as expected."""
         backend = DebtBackend()
-        
-        # Get initial prices
+        initial_base_rate = backend.base_interest_rate
         initial_prices = {bond_id: bond.current_price for bond_id, bond in backend.bonds.items()}
-        initial_rate = backend.base_interest_rate
-        
-        # Apply rate hike
-        rate_change_bps = 100  # 1% increase
-        backend.apply_interest_rate_shock(rate_change_bps)
-        
-        # Check rate updated
-        assert backend.base_interest_rate == initial_rate + Decimal('0.01')
-        
-        # Check bond prices changed (should generally decrease with rate hike)
+
+        # Simulate a rate hike to 4.5%
+        backend.update_interest_rates({'interest_rate': 4.5})
+        assert backend.base_interest_rate == Decimal('0.045')
+
+        # All bond prices should generally decrease with a rate hike
         for bond_id, bond in backend.bonds.items():
-            # Prices should have changed
-            assert bond.current_price != initial_prices[bond_id]
-            # YTM should be recalculated
+            assert bond.current_price < initial_prices[bond_id]
             assert bond.yield_to_maturity > 0
-            
-    def test_bond_price_calculation_with_rate_shock(self):
-        """Test bond price changes with rate shocks."""
-        backend = DebtBackend()
-        
-        # Get a specific bond
-        bond = backend.bonds["BOND-001"]
-        initial_price = bond.current_price
-        
-        # Apply significant rate hike
-        backend.apply_interest_rate_shock(500)  # 5% increase
-        
-        # Price should decrease significantly
-        assert bond.current_price < initial_price
-        
-        # Apply rate cut
-        backend.apply_interest_rate_shock(-300)  # 3% decrease
-        
-        # Price should increase from previous level
-        price_after_cut = bond.current_price
-        # Note: We can't guarantee it's higher than initial due to cumulative effects
+
+        # Simulate a rate cut to 2.0%
+        prices_after_hike = {bond_id: bond.current_price for bond_id, bond in backend.bonds.items()}
+        backend.update_interest_rates({'interest_rate': 2.0})
+        assert backend.base_interest_rate == Decimal('0.02')
+
+        # All bond prices should generally increase with a rate cut
+        for bond_id, bond in backend.bonds.items():
+            assert bond.current_price > prices_after_hike[bond_id]
+            assert bond.yield_to_maturity > 0
+
+        # Test with missing or None interest_rate (should not change anything)
+        prev_base_rate = backend.base_interest_rate
+        prev_prices = {bond_id: bond.current_price for bond_id, bond in backend.bonds.items()}
+        backend.update_interest_rates({})
+        backend.update_interest_rates({'interest_rate': None})
+        assert backend.base_interest_rate == prev_base_rate
+        for bond_id, bond in backend.bonds.items():
+            assert bond.current_price == prev_prices[bond_id]
         
     def test_bond_price_bounds(self):
         """Test bond prices stay within reasonable bounds."""

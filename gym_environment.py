@@ -59,16 +59,24 @@ class AgentTycoonEnv(gym.Env):
             'cognition_cost': spaces.Box(low=0.0, high=100.0, shape=(1,), dtype=np.float32)
         })
         
+        # Determine dynamic observation space sizes
+        num_stocks = len(self.trade_backend.stocks)
+        num_projects = len(self.project_backend.available_projects)
+        num_bonds = 5  # TODO: Make dynamic if bonds become configurable
+        num_project_features = 3  # required_investment, expected_return_pct, weeks_to_completion
+        max_portfolio_assets = num_stocks + num_projects + num_bonds  # or set to a reasonable upper bound
+        num_news_events = 10  # TODO: Make dynamic if news events become configurable
+
         # Define observation space
         self.observation_space = spaces.Dict({
             'tick': spaces.Discrete(self.max_episode_length + 1),
             'cash': spaces.Box(low=0.0, high=np.inf, shape=(1,), dtype=np.float32),
             'nav': spaces.Box(low=0.0, high=np.inf, shape=(1,), dtype=np.float32),
-            'portfolio_values': spaces.Box(low=0.0, high=np.inf, shape=(20,), dtype=np.float32),  # Max 20 assets
-            'stock_prices': spaces.Box(low=0.0, high=np.inf, shape=(5,), dtype=np.float32),  # 5 stocks
-            'project_info': spaces.Box(low=0.0, high=1.0, shape=(15,), dtype=np.float32),  # 5 projects * 3 features
-            'bond_prices': spaces.Box(low=0.0, high=np.inf, shape=(5,), dtype=np.float32),  # 5 bonds
-            'news_events': spaces.Box(low=0.0, high=1.0, shape=(10,), dtype=np.float32)  # One-hot encoded news
+            'portfolio_values': spaces.Box(low=0.0, high=np.inf, shape=(max_portfolio_assets,), dtype=np.float32),
+            'stock_prices': spaces.Box(low=0.0, high=np.inf, shape=(num_stocks,), dtype=np.float32),
+            'project_info': spaces.Box(low=0.0, high=1.0, shape=(num_projects * num_project_features,), dtype=np.float32),
+            'bond_prices': spaces.Box(low=0.0, high=np.inf, shape=(num_bonds,), dtype=np.float32),
+            'news_events': spaces.Box(low=0.0, high=1.0, shape=(num_news_events,), dtype=np.float32)
         })
         
         self.current_observation = None
@@ -272,10 +280,45 @@ class AgentTycoonEnv(gym.Env):
                 print(f"  {event.event_type}: {event.description}")
                 
     def _render_rgb_array(self):
-        """Render as RGB array (placeholder)."""
-        # This would typically create a visual representation
-        # For now, return a simple placeholder
-        return np.zeros((400, 600, 3), dtype=np.uint8)
+        """Render as RGB array: visualize portfolio and prices as colored bars."""
+        height, width = 400, 600
+        img = np.ones((height, width, 3), dtype=np.uint8) * 255  # White background
+
+        obs = self.current_observation
+        if obs is None:
+            return img
+
+        # Portfolio composition (top half)
+        portfolio = obs.get('portfolio_values', None)
+        if portfolio is not None:
+            n_assets = len(portfolio)
+            max_val = np.max(portfolio) if np.max(portfolio) > 0 else 1
+            bar_width = width // max(n_assets, 1)
+            for i, val in enumerate(portfolio):
+                bar_height = int((val / max_val) * (height // 2 - 20))
+                color = (50 + 40 * (i % 5), 100 + 30 * (i % 3), 200 - 30 * (i % 7))
+                x0 = i * bar_width
+                x1 = x0 + bar_width - 2
+                y0 = (height // 2) - bar_height
+                y1 = (height // 2)
+                img[y0:y1, x0:x1] = color
+
+        # Stock prices (bottom half)
+        stock_prices = obs.get('stock_prices', None)
+        if stock_prices is not None:
+            n_stocks = len(stock_prices)
+            max_price = np.max(stock_prices) if np.max(stock_prices) > 0 else 1
+            bar_width = width // max(n_stocks, 1)
+            for i, price in enumerate(stock_prices):
+                bar_height = int((price / max_price) * (height // 2 - 20))
+                color = (200 - 30 * (i % 7), 50 + 40 * (i % 5), 100 + 30 * (i % 3))
+                x0 = i * bar_width
+                x1 = x0 + bar_width - 2
+                y0 = height - bar_height
+                y1 = height
+                img[y0:y1, x0:x1] = color
+
+        return img
         
     def close(self):
         """Clean up resources."""

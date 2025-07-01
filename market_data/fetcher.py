@@ -3,6 +3,7 @@ import pandas as pd
 from fredapi import Fred
 from typing import Optional, Dict, Tuple, List, Union
 import os
+import warnings
 
 class DataFetcher:
     """
@@ -35,7 +36,7 @@ class DataFetcher:
         Get economic data from FRED, with in-memory caching.
         """
         if not self.fred:
-            print("FRED API key not provided. Cannot fetch economic data.")
+            warnings.warn("FRED API key not provided. Cannot fetch economic data.", UserWarning)
             return None
         cache_key = (series_id, start_date, end_date)
         if cache_key in self.econ_cache:

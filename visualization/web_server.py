@@ -8,8 +8,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from typing import List, Optional, Dict, Any
 import json
-import asyncio
-from datetime import datetime
 
 from .events import EventCollector, EventType, SimulationEvent
 
